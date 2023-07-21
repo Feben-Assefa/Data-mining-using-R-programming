@@ -1,0 +1,480 @@
+---
+title: "Assignment 1 File"
+output:
+  html_document:
+    df_print: paged
+---
+\vspace{0.25in}
+
+### Due February 20, 2022
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+set.seed(1)
+```
+
+## Problem Overview
+
+
+The goal of this homework is hands-on practice with linear regression, logistic regression, classification, and model selection. You will:
+
+1.	Conduct basic exploratory analysis of a data set
+2.	Develop linear and logistic regression models
+3.	Interpret your models
+4.	Partition your dataset and evaluate your models in terms of classification performance
+
+The Assignment
+
+The data in the accompanying file “car_sales.csv” (posted on Canvas) contains data from 10,062 car auctions. Auto dealers purchase used cars at auctions with the plan to sell them to consumers, but sometimes these auctioned vehicles can have severe issues that prevent them from being resold. The data contains information about each auctioned vehicle (for instance: the make, color, and age, among other variables).  A full data dictionary is given in carvana_data_dictionary.txt (we have included only a subset of the variables in their data set). See http://www.kaggle.com/c/DontGetKicked for documentation on the problem.
+
+Your task is to develop models to predict the target variable “IsBadBuy”, which labels whether a car purchased at auction was a “bad buy” or not. The intended use case for this model is to help an auto dealership decide whether or not to purchase an individual vehicle. 
+Please answer the questions below clearly and concisely, providing tables or plots where applicable. Turn in a well-formatted compiled HTML document using R Markdown, containing clear answers to the questions and R code in the appropriate places.
+
+RUBRIC: There are three possible grades on this assignment: Fail (F), Pass (P), and High Pass (H). If you receive an F then you will have one more chance to turn it in to receive a P. If you receive H on 3 out of the 4 assignments this semester you'll get a bonus point on your final average.
+
+1.  Turn in a well-formatted compiled HTML document using R markdown. If you turn in a different file type or your code doesn't compile, you will be asked to redo the assignment.
+2.  Provide clear answers to the questions and the correct R commands as necessary, in the appropriate places. You may answer up to three sub-questions incorrectly and still receive a P on this assignment (for example, 1(a) counts as one sub-question). If you answer all sub-questions correctly on your first submission you will receive an H.
+3.  The entire document must be clear, concise, readable, and well-formatted. If your assignment is unreadable or if you include more output than necessary to answer the questions you will be asked to redo the assignment.
+
+Note that this assignment is somewhat open-ended and there are many ways to answer these questions. I don't require that we have exactly the same answers in order for you to receive full credit.
+
+
+```{r loading}
+car <- read_csv("car_data.csv") #read the car_data dataset in R
+names(car) #variables used in dataset  
+  
+                                                    
+```
+
+## 0: Example answer
+
+What is the mean of VehicleAge variable?
+
+**ANSWER: The mean age of a vehicle in this dataset is 4.504969.**
+
+```{r code0}
+age_mean <- car %>%
+  summarise(mean_age = mean(VehicleAge))
+```
+
+## 1: EDA and Data Cleaning
+
+a) Construct and report boxplots of VehOdo and VehAge (broken up by values of IsBadBuy). Does it appear there is a relationship between either of these numerical variables and IsBadBuy? 
+
+**ANSWER TO QUESTION 1a HERE:** 
+
+```{r code1a}
+## Boxplot of Vehodo by IsBadBuy
+
+
+boxplot(car$VehOdo~car$IsBadBuy)
+
+
+## Boxplot of VehAge by IsBadBuy
+
+boxplot(car$VehicleAge~car$IsBadBuy)
+
+
+```
+
+
+
+**- According to the plot above, badbuy YES has a slightly higher vehicle age and also the median vehicle age is also higher for badbuy YES vehicles. For the odometer, the value of odometer is more or less similar for both badbuy badbuy YES and NO** 
+
+
+
+b) Construct a two-way table of IsBadBuy by Make. Does it appear that any vehicle makes are particularly problematic? 
+
+**ANSWER TO QUESTION 1b HERE:** 
+
+```{r code1b}
+
+table(car$Make, car$IsBadBuy)
+
+
+```
+
+
+**- Lexus looks particularly problematic because there is no good buy, and 8 bad buys**
+
+c) Construct the following new variables : 
+
+- MPYind = 1 when the miles/year is above the median and 0 otherwise
+- VehType which has the following values: 
+  - SUV when Size is LARGE SUV, MEDIUM SUV, or SMALL SUV
+  - Truck when Size is Large Truck, Medium Truck, or Small Truck
+  - Regular when Size is VAN, CROSSOVER, LARGE, or MEDIUM
+  - Small when Size is COMPACT, SPECIALTY, or SPORT
+  Hint: there are lots of ways to do this one, but case_when might be a useful function that's part of the tidyverse
+- Price0 which is 1 when either the MMRAcquisitionRetailAveragePrice or MMRAcquisitionAuctionAveragePrice are equal to 0, and 0 otherwise
+
+Also, modify these two existing variables:
+
+- The value of Make should be replaced with "other_make" when there are fewer than 20 cars with that make
+- The value of Color should be replaced with "other_color" when there are fewer than 20 cars with that color
+
+**ANSWER TO QUESTION 1c HERE:** 
+
+```{r code1c}
+
+car <- car %>%
+mutate(miles_per_year = VehOdo/VehicleAge,
+        MPYind = ifelse(miles_per_year > median(miles_per_year), 1,0),)%>%
+mutate(vehtype = case_when(Size == 'LARGE SUV'|Size == 'MEDIUM SUV'|Size == 'SMALL SUV' ~ 'SUV',
+                          Size == 'LARGE TRUCK'| Size == 'MEDIUM TRUCK' | Size == 'SMALL TRUCK' ~'Truck',
+                          Size == 'VAN'| Size == 'CROSSOVER' | Size =='LARGE'| Size == 'MEDIUM' ~                                                   'Regular',Size == 'COMPACT'| Size == 'SPECIALTY' | Size == 'SPORTS' ~                                                     'Small')) %>%
+mutate(price0 = ifelse(MMRAcquisitionAuctionAveragePrice == 0| MMRAcquisitionRetailAveragePrice == 0, 1,0),
+price0 = as.factor(price0)) %>%
+group_by(Make)%>%
+mutate(Make = ifelse(n()<20, 'other_make', Make))%>%
+ungroup()%>%
+group_by(Color)%>%
+mutate(Color = ifelse(n()<20, 'other_color', Color))%>%
+ungroup()
+ 
+```
+
+d) The rows where MMRAcquisitionRetailAveragePrice or MMRAcquisitionAuctionAveragePrice are equal to 0 are suspicious - it seems like those values might not be correct. Replace the two prices with the average grouped by vehicle make. Be sure to remove the 0's from the average calculation! 
+
+Hint: this one is a little tricky. Consider using the special character NA to replace the 0's.
+
+**ANSWER TO QUESTION 1d HERE:** 
+
+```{r code1d}
+# Replace zeros with NA
+
+car <- car %>%
+mutate(MMRAcquisitionAuctionAveragePrice = ifelse(MMRAcquisitionAuctionAveragePrice == 0, NA,      MMRAcquisitionAuctionAveragePrice),
+       MMRAcquisitionRetailAveragePrice = ifelse(MMRAcquisitionRetailAveragePrice == 0,          NA,MMRAcquisitionRetailAveragePrice))%>%
+  
+# Calculate the mean and replace with average value
+  
+group_by(Make) %>%
+ mutate(MMRAcquisitionAuctionAveragePrice = ifelse(is.na(MMRAcquisitionAuctionAveragePrice),mean(MMRAcquisitionAuctionAveragePrice , na.rm =   TRUE),MMRAcquisitionAuctionAveragePrice),
+        MMRAcquisitionRetailAveragePrice= ifelse(is.na(MMRAcquisitionRetailAveragePrice), mean(MMRAcquisitionRetailAveragePrice,na.rm=TRUE), MMRAcquisitionRetailAveragePrice))%>%
+ungroup()
+```
+
+
+## 2: Linear Regression
+
+a) Train a linear regression to predict IsBadBuy using the variables listed below. Report the R^2.
+
+- Auction
+- VehicleAge
+- Make
+- Color
+- WheelType
+- VehOdo
+- MPYind
+- VehType
+- MMRAcquisitionAuctionAveragePrice
+- MMRAcquisitionRetailAveragePrice
+
+**ANSWER TO QUESTION 2a HERE:** 
+
+```{r code2a}
+
+# Factor the categorical variables
+
+car <- car %>%
+  mutate(Auction = as.factor(Auction),
+         WheelType = as.factor(WheelType),
+         Size = as.factor(Size),
+         vehtype = as.factor(vehtype),
+         Make = as.factor(Make),
+         Color = as.factor(Color)
+         )
+
+# Run linear regression
+formula <-IsBadBuy ~ Auction + Make + Color + WheelType  + MPYind + vehtype + VehicleAge+VehOdo +MMRAcquisitionAuctionAveragePrice + MMRAcquisitionRetailAveragePrice
+
+model1 <- lm(data = car,formula)
+summary(model1)
+```
+**MULTIPLE R2 = 0.1894, Adjusted R2 = 0.1854** 
+
+b) What is the predicted value of IsBadBuy for a MANHEIM Auction, 4-year-old Compact Blue Volvo with 32000 miles, WheelType = Special, an MMR Auction Price of $8000, and an MMR Retail Price of $12000? What would be your predicted classification for the car, using a cutoff of 0.5? 
+
+**ANSWER TO QUESTION 2b HERE:** 
+
+```{r code2b}
+# create new data frame containing the information about a vehicle
+# Since MPYind =0, remove it
+
+df_isbadbuy <- data.frame(Auction= 'MANHEIM' , Make = 'other_make', Color = 'BLUE', WheelType = 'Special', VehicleAge = 4, VehOdo = 32000, vehtype = 'Small',MPYind = 0, MMRAcquisitionAuctionAveragePrice = 8000, MMRAcquisitionRetailAveragePrice= 12000)
+
+# predict based on the values
+
+est_isbadbuy <- predict(model1, newdata = df_isbadbuy )
+summary(est_isbadbuy)
+
+```
+
+c) Do you have any reservations about this predicted IsBadBuy? That is, would you feel sufficiently comfortable with this prediction in order to take action based on it? Why or why not? 
+
+**ANSWER TO QUESTION 2c HERE:**
+
+
+**-I have reservation about this prediction because the best practice for evaluating models meant for prediction is to measure performance using held out data.** 
+
+
+## 3: Logistic Regression
+
+a) Train a Logistic Regression model using the same variables as in 2a. Report the AIC of your model. 
+
+**ANSWER TO QUESTION 3a HERE:** 
+
+```{r code3a}
+# Logistic regression
+
+model2 <- glm(data = car,formula, family = 'binomial')
+
+summary(model2)
+```
+ **AIC IS 11778** 
+
+ 
+b) What is the coefficient for VehicleAge? Provide a precise (numerical) interpretation of the coefficient. 
+
+
+**The coefficient of vehicleAge is: 2.599e-01, this means  as the vehicle age increases by 1 year, we expect the odds of the vehicle being a bad buy increases by a multiplicative factor of e(2.599e-01) or 1.3, holding all other variables constant.** 
+
+
+c) What is the coefficient for VehType = Small? Provide a precise (numerical) interpretation of this coefficient. 
+
+**The coefficient of vehType small is:  3.419e-01: this means the odds are higher for is bad buy by 1.41 for small vehicles compared to Regular vehicle types, holding all other variables constant** 
+
+d) Compute the predicted probability that the same car as in #2b is a bad buy. Hint: you should use the predict function, but you need to specify type = "response" when predicting probabilities from logistic regression (otherwise, it will predict the value of logit). For example: predict(mymodel, newdata = mydata, type = "response"). 
+
+**ANSWER TO QUESTION 3d HERE:** 
+
+```{r code3d}
+
+# predict with logistic regression
+
+isbadbuy_logisitc <- predict(model2, newdata = df_isbadbuy, type = "response")
+summary(isbadbuy_logisitc)
+```
+
+e) If you were to pick one model to use for the purposes of inference (explaining the relationship between the features and the target variable) which would it be, and why? 
+
+**Logistic regression is better for inference because the target variable in catagorical** 
+
+## 4: Classification and Evaluation
+
+a) Split the data into 70% training and 30% validation sets, retrain the linear and logistic regression models using the training data only, and report the resulting R^2 and AIC, respectively. 
+
+**ANSWER TO QUESTION 4a HERE:** 
+
+```{r code4a}
+# Do a simple partition of the data into 70% train/30% validation
+
+set.seed(1)
+train_insts = sample(nrow(car), .7*nrow(car))
+data_train <- car[train_insts,]
+data_valid <- car[-train_insts,]
+
+# retrain linear regression model
+
+trained_model_linear <- lm(data = data_train, formula ) 
+summary(trained_model_linear)
+
+#retrain logistic regression model
+
+trained_model_logistic <- glm(data = data_train, formula, family = "binomial")
+summary(trained_model_logistic)
+```
+**Multiple R-squared:  0.1785,	Adjusted R-squared:  0.173 , AIC: 8374.7**
+
+
+
+b) Compute the RMSE in the training and validation sets for the linear model (do not do the classifications, just use the predicted score). Which is better, and does this make sense? Why or why not? 
+
+**ANSWER TO QUESTION 4b HERE:** 
+
+```{r code4b}
+# Compute RMSE for the validation sets
+validation_predict <- predict(trained_model_linear, newdata = data_valid)
+validation_RMSE <- sqrt(mean((validation_predict - data_valid$IsBadBuy)^2))
+validation_RMSE
+
+# compute RMSE for trainng sets
+
+train_predict <- predict(trained_model_linear, newdata = data_train)
+train_RMSE <- sqrt(mean((train_predict - data_train$IsBadBuy)^2))
+train_RMSE
+```
+
+**RMSE_validation: 0.4601466, RMSE_Train: 0.4491413 **
+
+c) For each model, display the confusion matrix resulting from using a cutoff of 0.5 to do the classifications in the validation data set. Report the accuracy, TPR, and FPR. Which model is the most accurate? 
+
+**ANSWER TO QUESTION 4c HERE:** 
+
+```{r code4c}
+# Define a function that trains and predicts probabilities and classifies based on a cutoff c for both models
+
+
+tr_pred_logistic<- function(train_data, valid_data, model_formula){
+  trained_model_logistic <- glm(data = train_data, model_formula) 
+  predictions <- predict(trained_model_logistic, newdata = valid_data, type = "response") 
+  return(predictions)
+}
+  
+# Define a function that uses scores to classify based on a cutoff c
+
+classify <- function(scores, c){
+  classifications <- ifelse(scores > c, "YES" , "NO") 
+  return(classifications) 
+}
+
+# Logisitic regression
+probs <- tr_pred_logistic(data_train, data_valid, formula )
+classifications <- classify(probs, .5)
+
+
+#actuals:
+valid_actuals <- data_valid$IsBadBuy
+
+#predictions (classifications with cutoff of .5 from before:
+valid_classifications <- classifications
+
+# confusion matrix code for logistic regression:
+
+CM = table(valid_actuals, valid_classifications)
+
+confusion_maker <- function(actuals, classifications){
+  
+  CM <- table(actuals, classifications)
+  TP <- CM[2,2]
+  TN <- CM[1,1]
+  FP <- CM[1,2]
+  FN <- CM[2,1]
+  
+  return(c(TP, TN, FP, FN))
+  
+}
+
+confusion_1 <- confusion_maker(valid_actuals, valid_classifications)
+log1_TP <- confusion_1[1]
+log1_TN <- confusion_1[2]
+log1_FP <- confusion_1[3]
+log1_FN <- confusion_1[4]
+
+# accuracy for linear regression
+
+log1_accuracy <- (log1_TP+log1_TN)/(log1_TP+log1_TN+log1_FP+log1_FN)
+log1_accuracy
+
+log1_TNR <- (log1_TN)/(log1_TN+log1_FP)
+log1_TPR<- log1_TP/(log1_TP+log1_FN)
+log1_FPR<- 1-log1_TNR
+log1_TPR
+log1_FPR
+
+```
+**TPR IS 0.5076616, FPR is 0.2147563, accuracy: 0.6472342 **
+
+d) For the more accurate model, compute the accuracy, TPR, and FPR using cutoffs of .25 and .75 in the validation data. Which cutoff has the highest accuracy, highest TPR, and highest FPR? 
+
+**ANSWER TO QUESTION 4d HERE:** 
+
+```{r code4d}
+
+# For cut off 0.25, find TPR, FPR and accuracy
+
+probs1 <- tr_pred_logistic(data_train, data_valid, formula )
+classifications1 <- classify(probs, .25)
+
+
+# confusion matrix code for logistic regression:
+CM2 = table(valid_actuals, classifications1)
+
+confusion_maker <- function(actuals, classifications1){
+  
+  CM <- table(actuals, classifications1)
+  TP <- CM2[2,2]
+  TN <- CM2[1,1]
+  FP <- CM2[1,2]
+  FN <- CM2[2,1]
+  
+  return(c(TP, TN, FP, FN))
+  
+}
+
+confusion_2 <- confusion_maker(valid_actuals, classifications1)
+log2_TP <- confusion_2[1]
+log2_TN <- confusion_2[2]
+log2_FP <- confusion_2[3]
+log2_FN <- confusion_2[4]
+
+# accuracy for cutoff = 0.25
+
+log2_accuracy <- (log2_TP+log2_TN)/(log2_TP+log2_TN+log2_FP+log2_FN)
+log2_accuracy
+
+log2_TNR <- (log2_TN)/(log2_TN+log2_FP)
+log2_TPR<- log2_TP/(log2_TP+log2_FN)
+log2_FPR<- 1-log2_TNR
+log2_TPR
+log2_FPR
+
+# For cutoff= 0.25, accuracy =   0.5382577
+# TPR = 0.9626915, FPR = 0.8814229
+
+
+# For cutoff = 0.75, find TPR, FPR and accuracy
+
+probs2 <- tr_pred_logistic(data_train, data_valid, formula )
+classifications2 <- classify(probs, .75)
+
+
+# confusion matrix code for logistic regression:
+
+CM3 = table(valid_actuals, classifications2)
+CM3
+confusion_maker <- function(actuals, classifications2){
+  
+  CM <- table(actuals, classifications2)
+  TP <- CM3[2,2]
+  TN <- CM3[1,1]
+  FP <- CM3[1,2]
+  FN <- CM3[2,1]
+  
+  return(c(TP, TN, FP, FN))
+  
+}
+
+confusion_3 <- confusion_maker(valid_actuals, classifications2)
+log3_TP <- confusion_3[1]
+log3_TN <- confusion_3[2]
+log3_FP <- confusion_3[3]
+log3_FN <- confusion_3[4]
+
+
+
+log3_accuracy <- (log3_TP+log3_TN)/(log3_TP+log3_TN+log3_FP+log3_FN)
+log3_accuracy
+
+log3_TNR <- (log3_TN)/(log3_TN+log3_FP)
+log3_TPR<- log3_TP/(log3_TP+log3_FN)
+log3_FPR<- 1-log3_TNR
+log3_TPR
+log3_FPR
+
+
+
+
+# Accuracy for cutoff 0.75 = 0.6134482, TPR =  0.2358428, FPR = 0.01317523
+
+### The highest accuracy is for cutoff = 0.5, highest TPR is for cutoff = 0.25, highest FPR is for cutoff = 0.25
+```
+```
+
+e) In your opinion, which cutoff of the three yields the best results for this application? Explain your reasoning.
+
+**The auctiondealer wants to have good deal, having false postives can be expensive in this case so low FPR with good accuracy is prefered, therefore cutoff 0.75 yields a potential good result** 
+
