@@ -1,0 +1,366 @@
+---
+title: "Assignment 3 File"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+\vspace{0.25in}
+
+### Due April 28, 2022
+### Worth 40 points total
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(text2vec)
+library(tm)
+library(SnowballC)
+library(glmnet)
+library(vip)
+library(naivebayes)
+library(ranger)
+library(xgboost)
+```
+
+## Problem Overview
+
+"Clickbait" is online content whose main purpose is to attract attention and encourage visitors to click on a link to a particular web page. The dataset for this assignment consists of clickbait titles (drawn from known clickbait websites such as Buzzfeed) and non-clickbait article titles drawn from reputable sources. The goal of this assignment will be to train predictive models to differentiate between clickbait and non-clickbait headlines.
+
+The goal of this assignment is to get hands-on practice with text featurization and advanced predictive modeling techniques, including Ridge, Lasso, ensemble methods, and Naive Bayes.
+
+RUBRIC: There are three possible grades on this assignment: Fail (F), Pass (P), and High Pass (H). If you receive an F then you will have one more chance to turn it in to receive a P. If you receive H on 3 out of the 4 assignments this semester you'll get a bonus point on your final average.
+
+1.  Turn in a well-formatted compiled HTML document using R markdown. If you turn in a different file type or your code doesn't compile, you will be asked to redo the assignment.
+2.  Provide clear answers to the questions and the correct R commands as necessary, in the appropriate places. You may answer up to three sub-questions incorrectly and still receive a P on this assignment (for example, 1(a) counts as one sub-question). If you answer all sub-questions correctly on your first submission you will receive an H.
+3.  The entire document must be clear, concise, readable, and well-formatted. If your assignment is unreadable or if you include more output than necessary to answer the questions you will be asked to redo the assignment.
+
+Note that this assignment is somewhat open-ended and there are many ways to answer these questions. I don't require that we have exactly the same answers in order for you to receive full credit.
+
+
+The following code block does some initial setup, including:
+
+1. Reading the dataset (make sure to set your working directory)
+2. Creating the target variable
+3. Setting the random seed
+4. Splitting into 70% training and 30% validation data
+
+```{r data_setup}
+
+cb_data <- read_csv("clickbait_headlines.csv") %>%
+  mutate(cb_numeric = clickbait,
+    clickbait = as.factor(clickbait))
+
+set.seed(1)
+train_rows <- sample(nrow(cb_data),.7*nrow(cb_data))
+cb_train <- cb_data[train_rows,]
+cb_valid <- cb_data[-train_rows,]
+
+tr_y <- cb_train$clickbait
+va_y <-cb_valid$clickbait
+
+# You'll also need numeric y for xgboost
+tr_y_num <- cb_train$cb_numeric
+va_y_num <- cb_valid$cb_numeric
+
+```
+
+## 0: Example answer
+
+What is the base rate (percent of clickbait articles) in the training data?
+
+**ANSWER: 51.26% of the headlines in this dataset are clickbait.**
+
+```{r code0}
+counts <- table(cb_train$clickbait)
+counts[0]/sum(counts)
+```
+
+## 1: Text Featurization
+
+a. Create the clickbait article vocabulary from their titles using the following parameters: lowercase the words, remove numbers and punctuation, remove stopwords, perform stemming. Include both unigrams and bigrams. Prune the resulting vocabulary to only include terms that occur in at least 10 article titles.
+
+**ANSWER TO QUESTION 1a HERE:** 
+
+```{r code_1a}
+# Set up tokenizer
+prep_fun = tolower
+cleaning_tokenizer <- function(v) {
+  v %>%
+    removeNumbers %>% #remove all numbers
+    removePunctuation %>% #remove all punctuation
+    removeWords(stopwords(kind="en")) %>% #remove stopwords
+    stemDocument %>%
+    word_tokenizer }
+tok_fun = cleaning_tokenizer
+
+# Iterate over the individual documents and convert them to tokens
+# Uses the functions defined above.
+it_data = itoken(cb_train$article_title, 
+                  preprocessor = prep_fun, 
+                  tokenizer = tok_fun, 
+                  ids = cb_train$article_id, 
+                  progressbar = FALSE)
+stop_words = c("the", "in", "to", "and", "a", "i", "of", "t.co", "https", "is")
+#Include unigrams and bigrams
+vocab <- create_vocabulary(it_data, ngram = c(1L, 2L), stopwords = stop_words)
+
+# Create the vocabulary from the itoken object
+vocab = create_vocabulary(it_data)
+vocab_small = prune_vocabulary(vocab, doc_count_min = 10)
+
+
+
+```
+
+b. Vectorize the training and validation emails and convert them into TFIDF representation.
+
+**ANSWER TO QUESTION 1b HERE: ** 
+
+```{r code_1b}
+# Create a vectorizer object using the vocabulary we learned
+vectorizer = vocab_vectorizer(vocab_small)
+
+# Convert the training documents into a DTM
+dtm_train = create_dtm(it_data, vectorizer)
+
+
+# Make a binary BOW matrix
+dtm_train_bin <- dtm_train>0+0
+
+# Make a TFIDF DTM
+tfidf = TfIdf$new()
+dtm_train_tfidf = fit_transform(dtm_train, tfidf)
+dtm_train_bin <- dtm_train>0+0
+
+# Can also use the defined vectorizer to convert the validation data
+it_valid = tok_fun(prep_fun(cb_valid$article_title))
+it_valid= itoken(it_valid, ids = cb_valid$article_id, progressbar = FALSE)
+dtm_valid = create_dtm(it_valid, vectorizer)
+
+dtm_valid_tfidf = fit_transform(dtm_valid, tfidf)
+
+```
+
+
+## 2: Ridge and Lasso
+
+a. Train 5-fold cross validated Ridge and lasso with lambda selected from a grid of 100 values ranging between 10^-7 and 10^7 (hint: use cv.glmnet). Include the plots showing the effect of lambda. 
+
+**ANSWER TO QUESTION 2a HERE:  ** 
+
+```{r code 2a}
+#or you can use the seq function to generate a large list
+#this one starts at 10^10, goes to 10^-2 in 100 steps
+grid <- 10^seq(7,-7,length=100)
+
+
+#glmnet automatically does cross-validation for you, you just need to specify k. Let's try k=5.
+k<-5
+
+
+#family="binomial" yields logistic regression; family="gaussian" yields linear regression
+#alpha = 1 yields the lasso penalty, and alpha= 0 the ridge penalty
+
+cv.out.lasso <- cv.glmnet(dtm_train, tr_y, family="binomial", alpha=1, lambda=grid, nfolds=k)
+
+cv.out.ridge <- cv.glmnet(dtm_train, tr_y, family="binomial", alpha=0, lambda=grid, nfolds=k)
+plot(cv.out.lasso)
+plot(cv.out.ridge)
+
+```
+
+b. Do the ridge and lasso models have the same best lambda? Inspect the coefficients of the best lasso and ridge models. Are the coefficients exactly the same? 
+
+**ANSWER TO QUESTION 2b HERE:** 
+
+```{r code 2b}
+bestlam_lasso<- cv.out.lasso$lambda.min
+
+bestlam_ridge <- cv.out.ridge$lambda.min
+
+pred_lasso <- predict(cv.out.lasso, s=bestlam_lasso, newx = dtm_valid,type="response")
+pred_ridge <- predict(cv.out.ridge, s=bestlam_ridge, newx = dtm_valid,type="response")
+
+coeffs.lasso <- coef(cv.out.lasso, s = "lambda.min")
+
+coeffs.ridge <- coef(cv.out.ridge, s = "lambda.min")
+
+```
+
+
+- The coefficients are different.
+
+
+c. Using the best lasso and ridge models, make predictions in the validation set. What are the accuracies of your best ridge and lasso models?
+
+**ANSWER TO QUESTION 2c HERE: ** 
+
+```{r code 2c}
+pred_ridge <- predict(cv.out.ridge, s=bestlam_ridge, newx = dtm_valid ,type="response")
+class_ridge <- ifelse(pred_ridge > 0.5, 0, 1)
+acc_ridge = mean(ifelse(class_ridge == va_y, 1, 0))
+acc_ridge
+pred_lasso <- predict(cv.out.lasso, s=bestlam_lasso, newx = dtm_valid ,type="response")
+class_lasso <- ifelse(pred_lasso> 0.5, 0, 1)
+acc_lasso = mean(ifelse(class_lasso == va_y, 1, 0))
+acc_lasso
+
+```
+Ridge accuracy = 0.08866667, lasso accuracy = 0.08766667
+
+## 3: Ensemble Methods
+
+a. Use ranger() to train a random forest model with 500 trees and m = 15. (Be patient, this one takes a few minutes to run). Do the predictions/classifications in the validation set and report the accuracy. Create a variable importance plot. Which are the most important terms?
+
+**ANSWER TO QUESTION 3a HERE:** 
+
+```{r code 3a}
+
+rf.mod <- ranger(x = dtm_train, y = tr_y,
+                 mtry=15, num.trees=500,
+                 importance="impurity",
+                 probability = TRUE)
+
+rf_preds <- predict(rf.mod, data=dtm_valid)$predictions[,2]
+rf_classifications <- ifelse(rf_preds>0.5, 1, 0)
+rf_acc <- mean(ifelse(rf_classifications == va_y, 1, 0))
+rf_acc
+
+vip(rf.mod)
+
+```
+
+The important terms are listed on the bargraph above.
+
+
+b. Use xgboost() to train a boosting model with max.depth = 2, eta = 1, and nrounds = 1000. Do the classifications in the validation set and make predictions. Report the accuracy of your boosting model. Create another variable importance plot. Are the most important terms the same as for the random forest model?
+
+
+**ANSWER TO QUESTION 3b HERE: ** 
+
+```{r code 3b}
+bst <- xgboost(data = dtm_train, label = tr_y_num, max.depth = 2, eta = 1, nrounds = 1000,  objective = "binary:logistic")
+
+bst_pred <- predict(bst, dtm_valid)
+bst_classifications <- ifelse(bst_pred > 0.5, 1, 0)
+bst_acc <- mean(ifelse(bst_classifications == va_y_num, 1, 0))
+bst_acc
+
+vip(bst,num_features = 20)
+
+```
+The accuracy for the boosting is 0.9086667 and the important terms are similar with random forest model.
+
+## 4: Naive Bayes
+
+a. Train two naive bayes models using multinomial_naive_bayes() - one with laplace = 3 and one with laplace = 0. 
+
+
+**ANSWER TO QUESTION 4a HERE:** 
+
+```{r code_4a}
+# Naive for laplace = 3
+NB_smoothed_3 <- multinomial_naive_bayes(x = dtm_train, y = tr_y, laplace = 3)
+
+
+# Naive for laplace = 0
+
+NB_smoothed_0 <- multinomial_naive_bayes(x = dtm_train, y = tr_y)
+
+
+```
+
+b. For both models, make predictions in the validation set, classify using a cutoff of 0.5, and report the accuracy. Do the two models have different performance?
+
+**ANSWER TO QUESTION 4b HERE: ** 
+
+```{r code_4b}
+nb_preds_3 <- predict(NB_smoothed_3, dtm_valid, type = "prob")[,2]
+nb_class_3 <- ifelse(nb_preds_3 > 0.5, 1, 0)
+nb_acc_3 <- mean(ifelse(nb_class_3 == va_y, 1, 0))
+nb_acc_3
+
+nb_preds_0 <- predict(NB_smoothed_0, dtm_valid, type = "prob")[,2]
+nb_class_0 <- ifelse(nb_preds_0 > 0.5, 1, 0)
+nb_acc_0 <- mean(ifelse(nb_class_0 == va_y, 1, 0))
+nb_acc_0
+```
+
+
+The laplace = 3 has slightly better performance with 0.9206667 accuracy while laplace 0  has 0.92
+
+c. Inspect some of the misclassifications. Find two false positives and two false negatives and explain why you think they may have been misclassified.
+
+**ANSWER TO QUESTION 4c HERE:** 
+
+```{r code_4c}
+cb_valid$prediction <- nb_class_3
+false_positive <- cb_valid %>%
+  filter(prediction == 1 & clickbait == 0)
+
+false_negative <- cb_valid %>%
+  filter(prediction == 0 & clickbait == 1)
+
+view(false_positive)
+view(false_negative)
+```
+
+False negatives:
+
+I'm Muslim, But I'm Not
+8 WTF Moments Of The 2016 Presidential Race
+
+The first article is probably misclassified because it contains too much frequent words that are underweighted like I, am, but, not
+
+The second article might be misclassified because it doesnot contain action verbs we see in the most important terms category.
+
+False positives
+
+	
+From Where She Sits, the Favorites Look Good
+Cigna to Stop Using Flawed Insurance Database
+
+I would say the above articles are probably miscalssified becausethey contain action words like stop, Good, look.
+
+## 5: Variable Selection
+
+a. Re-tokenize the article titles using the following parameters: DON'T remove numbers, DON'T remove punctuation, DON'T remove stop words, and DON'T stem the document. Create the vocabulary, including up to 4-grams. DON'T prune the vocabulary (yet).
+
+**ANSWER TO QUESTION 5a HERE:** 
+```{r code_5a}
+it_data_second = itoken(cb_train$article_title,
+                        ids = cb_train$article_id, 
+                         progressbar = FALSE)
+
+                  
+#Include ngrams
+
+vocab_second <- create_vocabulary(it_data_second, ngram = c(1L, 4L))
+
+```
+
+
+b. Using smoothed Naive Bayes, make a plot showing the effect of vocabulary size on validation accuracy. What is the effect of vocabulary size on predictive performance? Does it appear that including "too many terms" will cause the model to overfit?
+
+Hint: try pruning the vocabulary using a range of max_vocab_size values from 10 to the total size of the vocabulary. Create a list of your vocabulary sizes and loop over each size. You will have to re-vectorize the training and validation data before training each a new model. Plot the log of the resulting vocabulary size vs. validation accuracy.
+
+```
+
+**ANSWER TO QUESTION 5b HERE:** 
+# Create a vectorizer object using the vocabulary we learned
+vectorizer_second = vocab_vectorizer(vocab_second)
+
+# Convert the training documents into a DTM
+dtm_train_second = create_dtm(it_data, vectorizer_second)
+
+# Naive for laplace = 3
+NB_smoothed_second <- multinomial_naive_bayes(x = dtm_train_second, y = tr_y, laplace = 3)
+
+nb_preds_second <- predict(NB_smoothed_second, dtm_valid, type = "prob")[,2]
+nb_class_second <- ifelse(nb_preds_second > 0.5, 1, 0)
+nb_acc_second <- mean(ifelse(nb_class_second == va_y, 1, 0))
+nb_acc_second
+
+```
+- The accuracy for this new vocabulary is 0.7863333 which is actually lower than the previous vacabulary. The size of the vocabulary in this case had a negative effect on the performance.
